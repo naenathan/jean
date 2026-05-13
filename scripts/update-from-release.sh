@@ -7,6 +7,7 @@
 #   scripts/update-from-release.sh v0.1.47          # rebase onto a specific tag
 #   scripts/update-from-release.sh --update-flake   # also refresh flake.lock
 #   scripts/update-from-release.sh --check          # report status, make no changes
+#   scripts/update-from-release.sh --auto           # unattended: abort on conflict instead of pausing
 
 set -euo pipefail
 
@@ -17,11 +18,13 @@ REPO="${JEAN_REPO:-coollabsio/jean}"
 target_tag=""
 update_flake=0
 check_only=0
+auto_mode=0
 
 for arg in "$@"; do
   case "$arg" in
     --update-flake) update_flake=1 ;;
     --check)        check_only=1 ;;
+    --auto)         auto_mode=1 ;;
     -h|--help)
       sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
@@ -42,6 +45,23 @@ require() {
 }
 require git
 require gh
+
+refresh_flake() {
+  if [ ! -f flake.nix ]; then
+    echo "no flake.nix in working tree, skipping flake update" >&2
+    return
+  fi
+  require nix
+  echo
+  echo "refreshing flake.lock..."
+  nix flake update
+  if [ -n "$(git status --porcelain flake.lock)" ]; then
+    git add flake.lock
+    git commit -m "nix: refresh flake.lock"
+  else
+    echo "flake.lock already up to date"
+  fi
+}
 
 if [ -n "$(git status --porcelain)" ]; then
   echo "working tree is dirty; commit or stash first" >&2
@@ -96,26 +116,18 @@ if [ "$check_only" -eq 1 ]; then
   exit 3
 fi
 
-refresh_flake() {
-  if [ ! -f flake.nix ]; then
-    echo "no flake.nix in working tree, skipping flake update" >&2
-    return
-  fi
-  echo
-  echo "refreshing flake.lock..."
-  nix flake update
-  if [ -n "$(git status --porcelain flake.lock)" ]; then
-    git add flake.lock
-    git commit -m "nix: refresh flake.lock"
-  else
-    echo "flake.lock already up to date"
-  fi
-}
-
 echo
 echo "rebasing $NIX_BRANCH onto $target_tag..."
 git checkout "$NIX_BRANCH" --quiet
 if ! git rebase "$target_tag"; then
+  if [ "$auto_mode" -eq 1 ]; then
+    echo >&2
+    echo "rebase hit conflicts; aborting (auto mode)." >&2
+    git rebase --abort
+    echo "branch left untouched. resolve manually with:" >&2
+    echo "  scripts/update-from-release.sh" >&2
+    exit 4
+  fi
   echo >&2
   echo "rebase hit conflicts. resolve them, then:" >&2
   echo "  git rebase --continue" >&2
@@ -124,7 +136,6 @@ if ! git rebase "$target_tag"; then
 fi
 
 if [ "$update_flake" -eq 1 ]; then
-  require nix
   refresh_flake
 fi
 
