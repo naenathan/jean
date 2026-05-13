@@ -8,6 +8,7 @@
 #   scripts/update-from-release.sh --update-flake   # also refresh flake.lock
 #   scripts/update-from-release.sh --check          # report status, make no changes
 #   scripts/update-from-release.sh --auto           # unattended: abort on conflict instead of pausing
+#   scripts/update-from-release.sh --rebuild        # also `bun run tauri build` if we rebased
 
 set -euo pipefail
 
@@ -19,12 +20,14 @@ target_tag=""
 update_flake=0
 check_only=0
 auto_mode=0
+rebuild=0
 
 for arg in "$@"; do
   case "$arg" in
     --update-flake) update_flake=1 ;;
     --check)        check_only=1 ;;
     --auto)         auto_mode=1 ;;
+    --rebuild)      rebuild=1 ;;
     -h|--help)
       sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
@@ -61,6 +64,30 @@ refresh_flake() {
   else
     echo "flake.lock already up to date"
   fi
+}
+
+rebuild_app() {
+  require nix
+  echo
+  echo "rebuilding app (bun install + tauri build --no-bundle)..."
+  # Run inside the dev shell so PKG_CONFIG_PATH / LD_LIBRARY_PATH / GST_PLUGIN_PATH
+  # match what the shellHook sets up.
+  # --no-bundle: skip .deb/.rpm/.AppImage packaging. Tauri's bundler hardcodes
+  # /usr/bin/xdg-open which doesn't exist on NixOS, and we don't need the
+  # artifacts — the ~/.local/bin/jean wrapper exec's the binary directly.
+  if ! nix develop -c bash -c 'bun install && bun run tauri build --no-bundle'; then
+    echo >&2
+    echo "rebuild failed. source is updated but the binary at" >&2
+    echo "  src-tauri/target/release/jean" >&2
+    echo "is still the previous version. fix the build, then re-run:" >&2
+    echo "  nix develop -c bash -c 'bun install && bun run tauri build'" >&2
+    return 1
+  fi
+  if [ ! -x src-tauri/target/release/jean ]; then
+    echo "build succeeded but expected binary not found at src-tauri/target/release/jean" >&2
+    return 1
+  fi
+  echo "rebuild done. next launch of ~/.local/bin/jean will use the new binary."
 }
 
 if [ -n "$(git status --porcelain)" ]; then
@@ -139,6 +166,23 @@ if [ "$update_flake" -eq 1 ]; then
   refresh_flake
 fi
 
+rebuild_failed=0
+if [ "$rebuild" -eq 1 ]; then
+  if ! rebuild_app; then
+    rebuild_failed=1
+  fi
+fi
+
+if [ "$rebuild_failed" -eq 1 ]; then
+  # Distinct exit code so systemd can log "rebuilt failed" without conflating
+  # with a successful update or a conflict abort.
+  exit 5
+fi
+
 echo
-echo "done. smoke-test with:"
-echo "  nix develop -c bash -c 'bun install && bun run tauri dev'"
+if [ "$rebuild" -eq 1 ]; then
+  echo "done. click the bottom bar icon to launch the new build."
+else
+  echo "done. smoke-test with:"
+  echo "  nix develop -c bash -c 'bun install && bun run tauri dev'"
+fi
