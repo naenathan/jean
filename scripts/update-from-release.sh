@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-NIX_BRANCH="${JEAN_NIX_BRANCH:-nathan/nixos}"
+NIX_BRANCH="${JEAN_NIX_BRANCH:-main}"
 REMOTE="${JEAN_REMOTE:-origin}"
 REPO="${JEAN_REPO:-coollabsio/jean}"
 
@@ -110,10 +110,6 @@ fi
 
 if ! git rev-parse --verify --quiet "refs/heads/$NIX_BRANCH" >/dev/null; then
   echo "branch not found: $NIX_BRANCH" >&2
-  echo "create it first, then re-run:" >&2
-  echo "  git checkout -b $NIX_BRANCH" >&2
-  echo "  git add flake.nix flake.lock" >&2
-  echo "  git commit -m 'nix: add NixOS dev shell'" >&2
   exit 1
 fi
 

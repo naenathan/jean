@@ -1,112 +1,166 @@
 <div align="center">
 
-# Jean
+# Jean (NixOS Fork)
 
-A desktop AI assistant for managing multiple projects, worktrees, and chat sessions with Claude CLI, Codex CLI, Cursor CLI, and OpenCode.
-
-Tauri v2 · React 19 · Rust · TypeScript · Tailwind CSS v4 · shadcn/ui v4 · Zustand v5 · TanStack Query · CodeMirror 6 · xterm.js
+A personal fork of [coollabsio/jean](https://github.com/coollabsio/jean) with first-class NixOS support and a daily auto-update pipeline.
 
 </div>
 
-## About the Project
+## What this fork adds
 
-Jean is an opinionated native desktop app built with Tauri that gives you a powerful interface for working with Claude CLI, Codex CLI, Cursor CLI, and OpenCode across multiple projects. It has strong opinions about how AI-assisted development should work — managing git worktrees, chat sessions, terminals, GitHub and Linear integrations in one cohesive workflow.
+Upstream Jean targets macOS primarily, with community-tested Linux support on Arch. This fork makes it run cleanly on NixOS by pinning a reproducible build environment with Nix, patching one Linux-portability bug in the Tauri event loop, and shipping a self-updating systemd timer that keeps the locally built binary current with upstream releases.
 
-No vendor lock-in. Everything runs locally on your machine with your own Claude CLI, Codex CLI, Cursor CLI, or OpenCode installation.
+Concretely:
 
-For more information, take a look at [jean.build](https://jean.build).
+- `flake.nix` defines a dev shell with the exact webkitgtk, libsoup, GTK, GStreamer, and GSettings dependencies the Tauri webview needs at runtime, plus the right `PKG_CONFIG_PATH` / `LD_LIBRARY_PATH` / `GST_PLUGIN_SYSTEM_PATH_1_0` env so `bun run tauri dev` and `tauri build` both work out of the box
+- A small patch in `src-tauri/src/lib.rs` gates the `tauri::RunEvent::Reopen` match arm behind `#[cfg(target_os = "macos")]` since that variant only exists on macOS and breaks the Linux build otherwise
+- `scripts/install-local-nixos.sh` builds a `~/.local/bin/jean` wrapper that injects the dev shell's runtime env into the compiled binary, and registers a `.desktop` entry and icon so the app shows up in your launcher and can be pinned to your bar
+- `scripts/install-auto-update.sh` installs a systemd user timer that runs `scripts/update-from-release.sh` daily at 8 AM, rebasing the local nix branch onto the latest upstream release tag and rebuilding the binary in place
 
-## Screenshots
+The everything-just-works goal: pin Jean to your bottom bar once, then keep clicking it. The icon always launches the latest upstream release with the local nix patches applied.
 
-<table>
-<tr>
-<td><img src="screenshots/SCR-20260304-krym.png" width="400" alt="Screenshot 1" /></td>
-<td><img src="screenshots/SCR-20260304-ksgh.png" width="400" alt="Screenshot 2" /></td>
-</tr>
-<tr>
-<td><img src="screenshots/SCR-20260304-ksjn.png" width="400" alt="Screenshot 3" /></td>
-<td><img src="screenshots/SCR-20260304-ksnq.png" width="400" alt="Screenshot 4" /></td>
-</tr>
-<tr>
-<td><img src="screenshots/SCR-20260304-kstl.png" width="400" alt="Screenshot 5" /></td>
-<td><img src="screenshots/SCR-20260304-ktab.png" width="400" alt="Screenshot 6" /></td>
-</tr>
-<tr>
-<td><img src="screenshots/SCR-20260304-ktwr.png" width="400" alt="Screenshot 7" /></td>
-<td><img src="screenshots/SCR-20260304-kuhk.png" width="400" alt="Screenshot 8" /></td>
-</tr>
-</table>
+## First-time install on NixOS
 
-## Features
-
-- **Project & Worktree Management** — Multi-project support, linked projects for cross-project context, git worktree automation (create, archive, restore, delete), custom project avatars
-- **Session Management** — Multiple sessions per worktree, execution modes (Plan, Build, Yolo) with plan approval flows, session recap/digest, saved contexts with AI summarization, archiving with retention settings, recovery, auto-naming, canvas views
-- **AI Chat (Claude CLI, Codex CLI, Cursor CLI, OpenCode)** — Model selection (Opus 4.5, Opus 4.6, Opus 4.6 1M, Sonnet 4.6, Haiku), thinking/effort levels with per-mode overrides, MCP server support, Codex multi-agent collaboration, file picker & image attachments, chat search, notification sounds, custom system prompts, custom CLI profiles
-- **Magic Commands** — Investigate issues/PRs/workflows, code review with finding tracking, AI commit messages, PR content generation, merge conflict resolution, release notes generation, customizable per-prompt model/backend/effort selection
-- **GitHub Integration** — Dashboard with Issues, PRs, Security Alerts, and Advisories tabs, Dependabot investigation, checkout PRs as worktrees, auto-archive on PR merge, workflow investigation
-- **Linear Integration** — Issue investigation, context loading, per-project API key and team configuration
-- **Developer Tools** — Multi-dock terminal (floating, left, right, bottom), command palette, open in editor (Zed, VS Code, Cursor, Xcode, IntelliJ), git operations (status, stash, revert, fetch/merge with conflict detection), diff viewer (unified & side-by-side), file tree with preview, debug panel with token usage tracking
-- **Remote Access** — Built-in HTTP server with WebSocket support, token-based auth, web browser access
-- **Customization** — Themes (light/dark/system), custom fonts, customizable AI prompts, configurable keybindings, mobile swipe gestures
-
-## Installation
-
-Download the latest version from the [GitHub Releases](https://github.com/coollabsio/jean/releases) page or visit [jean.build](https://jean.build).
-
-### Homebrew (macOS)
+Prerequisites: the [Nix package manager](https://nixos.org/download) with flakes enabled, [`gh`](https://cli.github.com/) authenticated to your GitHub account.
 
 ```bash
-brew tap coollabsio/jean
-brew install --cask jean
+git clone https://github.com/naenathan/jean.git
+cd jean
+
+# build the binary once so the wrapper has something to exec
+nix develop -c bun install
+nix develop -c bun run tauri build --no-bundle
+
+# install wrapper, .desktop entry, and icon
+scripts/install-local-nixos.sh
+
+# install the daily auto-update timer
+JEAN_REMOTE=upstream scripts/install-auto-update.sh
 ```
 
-### Building from Source
+The `--no-bundle` flag skips Tauri's `.deb` / `.rpm` / `.AppImage` packaging step, which hardcodes `/usr/bin/xdg-open` and fails on NixOS where `xdg-open` lives elsewhere. The wrapper at `~/.local/bin/jean` exec's the compiled binary at `src-tauri/target/release/jean` directly, so the bundle artifacts are not needed.
 
-Prerequisites:
+After install, pin Jean to your bar by opening it once from your launcher and right-clicking the bar icon. Future clicks always run the latest build.
 
-- [Node.js](https://nodejs.org/)
-- [Rust](https://www.rust-lang.org/tools/install)
-- **Windows only**: In the Visual Studio Installer, ensure the **"Desktop development with C++"** workload is selected, which includes:
-  - MSVC C++ build tools
-  - Windows SDK (provides `kernel32.lib` and other system libraries required by Rust)
+### Adding the upstream remote
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for full development setup and guidelines.
-
-## Platform Support
-
-- **macOS**: Tested
-- **Windows**: Not fully tested
-- **Linux**: Community tested (Arch Linux + Hyprland/Wayland)
-
-## Headless Web Access
-
-Run Jean without the desktop window and expose the web UI over HTTP:
+If you cloned this fork (recommended), the auto-update script needs a remote pointing at coollabsio/jean to fetch release tags from. The clone command above does not set this up automatically:
 
 ```bash
-jean --headless --host 127.0.0.1 --port 3456
+git remote add upstream https://github.com/coollabsio/jean.git
+git fetch --tags upstream
 ```
 
-`--host` accepts `localhost` or an IP address. Passing a specific address such
-as your Tailscale IP binds Jean only to that interface.
+Verify with `git remote -v`. The `install-auto-update.sh` invocation above passes `JEAN_REMOTE=upstream` so the systemd unit's environment block points the timer at the right remote.
 
-## Roadmap
+## Daily auto-update pipeline
 
-- Enhance remote web access
+A systemd user timer fires at 08:00 local time (with up to 2 minutes of jitter so multiple machines don't hammer GitHub at the same instant), executing the following steps:
 
-## Contributing
+1. `git fetch --tags upstream` to pull any new release tags
+2. Look up the latest release via `gh release view --repo coollabsio/jean`
+3. If `main` is already based on the latest tag, refresh `flake.lock` via `nix flake update` (commits the bump if anything changed) and exit
+4. Otherwise rebase `main` onto the latest tag. On conflict, run `git rebase --abort` so the branch is left exactly as it was, and log the failure for manual resolution
+5. Refresh `flake.lock` and commit any change
+6. Rebuild the app via `nix develop -c bash -c 'bun install && bun run tauri build --no-bundle'`. The fresh binary lands at `src-tauri/target/release/jean`, which the wrapper picks up on next launch. If the app is currently running, Linux keeps the old executable mapped for the running process and uses the new one on the next launch (no risk of crashing mid-use)
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+The full source for this pipeline is in `scripts/update-from-release.sh`. It supports several modes for manual invocation:
 
-## Core Maintainer
+| Invocation | Behavior |
+|---|---|
+| `scripts/update-from-release.sh` | Rebase onto latest release, pause for conflict resolution if needed |
+| `scripts/update-from-release.sh v0.1.47` | Rebase onto a specific tag instead of the latest |
+| `scripts/update-from-release.sh --check` | Report status only, make no changes (exits 3 if behind) |
+| `scripts/update-from-release.sh --auto` | Abort cleanly on conflict instead of pausing (used by the timer) |
+| `scripts/update-from-release.sh --update-flake` | Also run `nix flake update` and commit the result |
+| `scripts/update-from-release.sh --rebuild` | Also `bun install && bun run tauri build --no-bundle` after rebase |
 
-|                                                                                                                                                                            Andras Bacsai                                                                                                                                                                             |
-| :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: |
-|                                                                                                                                         <img src="https://github.com/andrasbacsai.png" width="200px" alt="Andras Bacsai" />                                                                                                                                          |
-| <a href="https://github.com/andrasbacsai"><img src="https://api.iconify.design/devicon:github.svg" width="25px"></a> <a href="https://x.com/heyandras"><img src="https://api.iconify.design/devicon:twitter.svg" width="25px"></a> <a href="https://bsky.app/profile/heyandras.dev"><img src="https://api.iconify.design/simple-icons:bluesky.svg" width="25px"></a> |
+The systemd unit calls it with `--auto --update-flake --rebuild`, the unattended-safe combination.
 
-## Philosophy
+### Exit codes
 
-Learn more about our approach: [Philosophy](https://coollabs.io/philosophy/)
+The script and service share a small set of distinct exit codes so the log is unambiguous:
+
+| Code | Meaning | Action needed |
+|---|---|---|
+| 0 | Up to date, or fully updated successfully | None |
+| 3 | Out of date (only from `--check` mode) | Run without `--check` to apply |
+| 4 | Rebase hit a conflict, branch was aborted and is untouched | Run `scripts/update-from-release.sh` manually and resolve |
+| 5 | Rebase succeeded but the build failed (source updated, binary stale) | Check the log, fix the build, run `nix develop -c bash -c 'bun install && bun run tauri build --no-bundle'` |
+| other | Error before any state change (dirty tree, network, missing tools) | Check the log |
+
+`SuccessExitStatus=0 4 5` in the unit tells systemd to treat conflict-aborts and build failures as clean exits (the abort itself is the correct behavior), so `systemctl --user status` does not show false-positive failures.
+
+### Where to look
+
+| Thing | Path |
+|---|---|
+| Service unit | `~/.config/systemd/user/jean-release-check.service` |
+| Timer unit | `~/.config/systemd/user/jean-release-check.timer` |
+| Daily log | `~/.local/state/jean/release-check.log` |
+| Manual rebuild log | `~/.local/state/jean/manual-rebuild.log` (only written by manual `tee` invocations) |
+| Wrapper | `~/.local/bin/jean` |
+| Desktop entry | `~/.local/share/applications/jean.desktop` |
+| Icon | `~/.local/share/icons/hicolor/128x128/apps/jean.png` |
+
+### Useful commands
+
+```bash
+# peek at timer state and the most recent log entries
+scripts/install-auto-update.sh --status
+
+# run the pipeline right now (does not affect the daily schedule)
+systemctl --user start jean-release-check.service
+
+# stream the full unit log including stderr from systemd
+journalctl --user -u jean-release-check.service -n 50
+
+# disable auto-update entirely (leaves the log file behind)
+scripts/install-auto-update.sh --uninstall
+```
+
+### Configuration via env vars
+
+`scripts/install-auto-update.sh` reads three env vars and bakes them into the generated unit file. Re-run the install script after changing any of them:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `JEAN_NIX_BRANCH` | `main` | The local branch holding nix patches that gets rebased onto upstream releases. On this fork `main` plays that role; set this if you keep your patches on a different branch |
+| `JEAN_REMOTE` | `origin` | The git remote to fetch release tags from. Set to `upstream` if `origin` is your fork |
+| `JEAN_TIMER_TIME` | `*-*-* 08:00:00` | When to fire, in systemd `OnCalendar` format. See `man systemd.time` for syntax |
+
+For example, to move the daily run to 6 AM and use a different branch name:
+
+```bash
+JEAN_NIX_BRANCH=local/nixos JEAN_TIMER_TIME='*-*-* 06:00:00' scripts/install-auto-update.sh
+```
+
+### A note on lingering
+
+User systemd timers only fire while a user session is active. If you want the timer to run even when no one is logged in:
+
+```bash
+sudo loginctl enable-linger $USER
+```
+
+`Persistent=true` in the timer unit also makes systemd catch up at the next login if a fire was missed (machine asleep, user logged out, etc.), so for a personal workstation you typically do not need lingering.
+
+## Diverging from upstream
+
+The fork carries a small, stable set of patches on top of every upstream release tag:
+
+1. `flake.nix` and `flake.lock`: nix dev shell with all runtime deps
+2. The `RunEvent::Reopen` cfg gate in `src-tauri/src/lib.rs` for Linux portability
+3. `scripts/install-local-nixos.sh`: wrapper installer
+4. `scripts/update-from-release.sh`: the rebase + rebuild pipeline
+5. `scripts/install-auto-update.sh`: systemd timer installer
+6. This README
+
+These get replayed onto each new upstream release tag via `git rebase`. Conflicts are rare in practice because none of the patches touch upstream's hot paths (the `RunEvent::Reopen` gate is the only one that edits an upstream file, and that arm of the match is rarely changed upstream). When a conflict does happen, the auto-update aborts cleanly and waits for a manual resolution.
+
+## Upstream
+
+For everything else, see the upstream README at [coollabsio/jean](https://github.com/coollabsio/jean) and the project site at [jean.build](https://jean.build). All credit for Jean itself goes to Andras Bacsai and the upstream contributors.
 
 ## Star History
 
